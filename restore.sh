@@ -108,7 +108,17 @@ else
 fi
 
 # Load environment variables
-source "${SCRIPT_DIR}/.env"
+source_env() {
+    local envfile="$1"
+    set -a
+    while IFS='=' read -r key value; do
+        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+        key=$(echo "$key" | xargs)
+        export "$key=$value"
+    done < "$envfile"
+    set +a
+}
+source_env "${SCRIPT_DIR}/.env"
 
 # ===== Start containers =====
 echo -e "${CYAN}[3/6] 🐳 تشغيل الحاويات...${NC}"
@@ -121,7 +131,7 @@ sleep 30
 retry_count=0
 max_retries=30
 until docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T mariadb \
-    mysql -u root -p"${MARIADB_ROOT_PASSWORD}" -e "SELECT 1" > /dev/null 2>&1; do
+    mariadb -u root -p"${MARIADB_ROOT_PASSWORD}" -e "SELECT 1" > /dev/null 2>&1; do
     retry_count=$((retry_count + 1))
     if [ $retry_count -ge $max_retries ]; then
         echo -e "${RED}   ❌ تعذر الاتصال بقاعدة البيانات!${NC}"
@@ -138,12 +148,12 @@ echo -e "${CYAN}[4/6] 💾 استعادة قاعدة البيانات...${NC}"
 
 # Drop and recreate database
 docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T mariadb \
-    mysql -u root -p"${MARIADB_ROOT_PASSWORD}" -e \
+    mariadb -u root -p"${MARIADB_ROOT_PASSWORD}" -e \
     "DROP DATABASE IF EXISTS ${MOODLE_DATABASE_NAME}; CREATE DATABASE ${MOODLE_DATABASE_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # Import SQL dump
 docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T mariadb \
-    mysql -u root -p"${MARIADB_ROOT_PASSWORD}" "${MOODLE_DATABASE_NAME}" \
+    mariadb -u root -p"${MARIADB_ROOT_PASSWORD}" "${MOODLE_DATABASE_NAME}" \
     < "${EXTRACTED_DIR}/database.sql"
 
 echo -e "${GREEN}   ✅ تم استعادة قاعدة البيانات${NC}"

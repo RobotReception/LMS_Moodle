@@ -21,7 +21,16 @@ BACKUP_PATH="${BACKUP_DIR}/${BACKUP_NAME}"
 
 # Load environment variables
 if [ -f "${SCRIPT_DIR}/.env" ]; then
-    source "${SCRIPT_DIR}/.env"
+    set -a
+    while IFS='=' read -r key value; do
+        # Skip comments and empty lines
+        [[ "$key" =~ ^#.*$ || -z "$key" ]] && continue
+        # Remove leading/trailing whitespace
+        key=$(echo "$key" | xargs)
+        # Export the variable
+        export "$key=$value"
+    done < "${SCRIPT_DIR}/.env"
+    set +a
 else
     echo -e "${RED}❌ ملف .env غير موجود!${NC}"
     exit 1
@@ -52,7 +61,7 @@ echo ""
 # ===== 1. Database Backup =====
 echo -e "${CYAN}[1/4] 💾 نسخ قاعدة البيانات...${NC}"
 docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T mariadb \
-    mysqldump -u root -p"${MARIADB_ROOT_PASSWORD}" \
+    mariadb-dump -u root -p"${MARIADB_ROOT_PASSWORD}" \
     --single-transaction \
     --routines \
     --triggers \
@@ -66,7 +75,11 @@ echo -e "${GREEN}   ✅ تم نسخ قاعدة البيانات (${DB_SIZE})${NC
 # ===== 2. Moodledata Backup =====
 echo -e "${CYAN}[2/4] 📂 نسخ ملفات Moodledata...${NC}"
 if [ -d "${SCRIPT_DIR}/data/moodledata" ]; then
-    tar -czf "${BACKUP_PATH}/moodledata.tar.gz" -C "${SCRIPT_DIR}/data" moodledata/
+    # Use docker to tar since files are owned by www-data
+    docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T moodle \
+        tar -czf /tmp/moodledata_backup.tar.gz -C /var moodledata/
+    docker compose -f "${SCRIPT_DIR}/docker-compose.yml" cp moodle:/tmp/moodledata_backup.tar.gz "${BACKUP_PATH}/moodledata.tar.gz"
+    docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T moodle rm -f /tmp/moodledata_backup.tar.gz
     MD_SIZE=$(du -sh "${BACKUP_PATH}/moodledata.tar.gz" | cut -f1)
     echo -e "${GREEN}   ✅ تم نسخ Moodledata (${MD_SIZE})${NC}"
 else
@@ -75,8 +88,9 @@ fi
 
 # ===== 3. Moodle config.php Backup =====
 echo -e "${CYAN}[3/4] ⚙️  نسخ ملف الإعدادات config.php...${NC}"
-if [ -f "${SCRIPT_DIR}/data/moodle/config.php" ]; then
-    cp "${SCRIPT_DIR}/data/moodle/config.php" "${BACKUP_PATH}/config.php"
+# Use docker cp since files are owned by www-data
+if docker compose -f "${SCRIPT_DIR}/docker-compose.yml" exec -T moodle test -f /var/www/html/config.php 2>/dev/null; then
+    docker compose -f "${SCRIPT_DIR}/docker-compose.yml" cp moodle:/var/www/html/config.php "${BACKUP_PATH}/config.php"
     echo -e "${GREEN}   ✅ تم نسخ config.php${NC}"
 else
     echo -e "${YELLOW}   ⚠️  config.php غير موجود - تخطي${NC}"
